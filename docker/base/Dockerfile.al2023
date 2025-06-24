@@ -28,8 +28,17 @@ RUN if [ "$ENABLE_CUDA" = "true" ]; then \
         http://developer.download.nvidia.com/compute/cuda/repos/amzn2023/x86_64/cuda-amzn2023.repo \
         --save && \
         yum -y clean expire-cache && \
-        yum -y install cuda-cudart-devel-12-6 cuda-crt-12-6 && \
+        yum -y install cuda cuda-cudart-devel-12-6 cuda-crt-12-6 && \
         yum clean all; \
+    fi
+
+# Install NCCL if enabled.
+# Hi-jack ENABLE_CUDA for now (flag is not most important), to test it working.
+# See if there's a way to install the newest tag, -b v2.27.5-1
+RUN if [ "$ENABLE_CUDA" = "true" ]; then \
+        cd /opt && \
+        git clone https://github.com/NVIDIA/nccl.git -b v2.27.5-1 && cd nccl && \
+        make -j src.build CUDA_HOME=/usr/local/cuda; \
     fi
 
 # Install EFA

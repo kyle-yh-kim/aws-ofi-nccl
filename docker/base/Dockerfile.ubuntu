@@ -75,6 +75,31 @@ RUN if [ "$ENABLE_CUDA" = "true" ]; then \
         rm -rf /var/lib/apt/lists/*; \
     fi
 
+# Install NCCL if enabled.
+# Hi-jack ENABLE_CUDA for now (flag is not most important), to test it working.
+RUN if [ "$ENABLE_CUDA" = "true" ]; then \
+        repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')" && \
+        wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb && \
+        dpkg -i cuda-keyring_1.1-1_all.deb && \
+        apt-get update && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y libnccl2 libnccl-dev && \
+        mkdir /opt/nccl && \
+        mkdir /opt/nccl/build && \
+        mkdir /opt/nccl/build/lib && \
+        mkdir /opt/nccl/build/include && \
+        ln -s $(dpkg -L libnccl2 | grep "libnccl.so.2.") /opt/nccl/build/lib/libnccl.so && \
+        ln -s $(dpkg -L libnccl-dev | grep "nccl.h$") /opt/nccl/build/include/nccl.h && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Some print statement for where the NCCL is located?
+RUN if [ "$ENABLE_CUDA" = "true" ]; then \
+        echo "Printing libnccl2 location" && \
+        dpkg-query -L libnccl2 && \
+        echo "Printing libnccl-dev location" && \
+        dpkg-query -L libnccl-dev; \
+    fi
+
 # Install lttng if enabled
 RUN if [ "$ENABLE_TRACING" = "true" ]; then \
         apt-get update && \

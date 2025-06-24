@@ -15,6 +15,8 @@
 #include "cuda_runtime.h"
 #include "mpi.h"
 #include "nccl.h"
+#include <stdio.h>
+#include <sys/time.h>
 
 #define DELAY_INCREMENT 100000
 #define DELAY_START 100000
@@ -73,6 +75,8 @@ static void getHostName(char *hostname)
 
 static void testAbortDoesNotHang(unsigned int delay_usec)
 {
+    struct timeval stop, start;
+    gettimeofday(&start, NULL);
     // Initialize MPI ranks.
     int myRank, nRanks, localRank = 0;
     MPICHECK(MPI_Comm_rank(MPI_COMM_WORLD, &myRank));
@@ -132,6 +136,8 @@ static void testAbortDoesNotHang(unsigned int delay_usec)
     NCCLCHECK(ncclCommAbort(comm));
     CUDACHECK(cudaStreamSynchronize(stream));
     CUDACHECK(cudaStreamDestroy(stream));
+    gettimeofday(&stop, NULL);
+    printf("yeet: took %lu us\n", (stop.tv_sec - start.tv_sec) * 1000000 + stop.tv_usec - start.tv_usec);
 }
 
 int main(int argc, char *argv[])

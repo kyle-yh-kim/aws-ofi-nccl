@@ -92,7 +92,8 @@ jobs:
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
                         --${{ matrix.platform-aws }}-platform-aws \
-                        --with-cuda=/usr/local/cuda/
+                        --with-cuda=/usr/local/cuda/ \
+                        --with-nccl=/opt/nccl/build
           fi
 
       - name: Call `make`
@@ -158,7 +159,8 @@ jobs:
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
                         --enable-platform-aws \
-                        --with-cuda=/usr/local/cuda/
+                        --with-cuda=/usr/local/cuda/ \
+                        --with-nccl=/opt/nccl/build
           fi
 
       - name: Call `make`
@@ -212,7 +214,8 @@ jobs:
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
                         --enable-platform-aws \
-                        --with-cuda=/usr/local/cuda/
+                        --with-cuda=/usr/local/cuda/ \
+                        --with-nccl=/opt/nccl/build
           fi
 
       - name: Run CodeChecker
