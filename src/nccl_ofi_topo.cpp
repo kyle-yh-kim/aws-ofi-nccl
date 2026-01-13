@@ -503,6 +503,10 @@ static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
  * the root has already set the user data of the remaining nodes
  * towards the root. The user data is provided by `data_iter`.
  *
+ * All nodes visited by this function have their is_along_nic_or_gpu_path
+ * flag set to true, indicating they are on the path from a NIC or GPU
+ * to the root.
+ *
  * @param	node
  * 		Input topology node
  * @param	data_iter
@@ -528,12 +532,116 @@ static int set_userdata_to_root(hwloc_obj_t node,
 			}
 			node->userdata = user_data;
 			user_data->node = node;
+			user_data->is_along_nic_or_gpu_path = true;
+			user_data->relevant_numa_id = -1;
 			nccl_ofi_inc_user_data_iter(data_iter);
+		} else {
+			/* Node already has userdata, but we still need to mark it
+			 * as being along the NIC/GPU path */
+			user_data = (nccl_ofi_topo_data_t *)node->userdata;
+			user_data->is_along_nic_or_gpu_path = true;
 		}
 		node = node->parent;
 	}
 
 	return 0;
+}
+
+/*
+ * @brief	Set relevant_numa_id for PACKAGE and NUMA nodes based on HWLOC version
+ *
+ * For HWLOC 1.x:
+ *   - Upon detecting HWLOC_OBJ_PACKAGE type, traverse up and find the first
+ *     HWLOC_OBJ_NUMANODE, then mark the PACKAGE's relevant_numa_id with that NUMA ID.
+ *   - Upon detecting HWLOC_OBJ_NUMANODE type, traverse up and find the first
+ *     HWLOC_OBJ_PACKAGE, then mark the PACKAGE's relevant_numa_id with the NUMA ID.
+ *
+ * For HWLOC 2.x:
+ *   - NUMA nodes are in memory children list, so we handle PACKAGE nodes by
+ *     looking at their memory children for NUMA nodes.
+ *
+ * @param	topo
+ *		Hwloc topology
+ */
+static void set_relevant_numa_ids(hwloc_topology_t topo)
+{
+#if (HWLOC_API_VERSION >= 0x00020000)
+	/* HWLOC 2.x: NUMA nodes are in memory children list.
+	 * For PACKAGE nodes, look at memory children to find NUMA nodes
+	 * and set relevant_numa_id on the PACKAGE. */
+	hwloc_obj_t obj = NULL;
+	while ((obj = hwloc_get_next_obj_by_type(topo, HWLOC_OBJ_PACKAGE, obj))) {
+		nccl_ofi_topo_data_t *pkg_data = (nccl_ofi_topo_data_t *)obj->userdata;
+		if (!pkg_data || !pkg_data->is_along_nic_or_gpu_path) {
+			continue;
+		}
+
+		/* Look for NUMA node in memory children */
+		if (obj->memory_arity > 0) {
+			hwloc_obj_t mem_child = obj->memory_first_child;
+			while (mem_child != NULL) {
+				if (mem_child->type == HWLOC_OBJ_NUMANODE) {
+					pkg_data->relevant_numa_id = (int)mem_child->os_index;
+					break;
+				}
+				mem_child = mem_child->next_sibling;
+			}
+		}
+	}
+#else
+	/* HWLOC 1.x: NUMA nodes are in the normal topology tree.
+	 * For PACKAGE nodes, traverse up to find the first NUMANODE.
+	 * For NUMANODE nodes, traverse up to find the first PACKAGE and set its relevant_numa_id. */
+	hwloc_obj_t obj = NULL;
+
+	/* First pass: For each NUMANODE, find the first PACKAGE ancestor and set its relevant_numa_id */
+	while ((obj = hwloc_get_next_obj_by_type(topo, HWLOC_OBJ_NUMANODE, obj))) {
+		nccl_ofi_topo_data_t *numa_data = (nccl_ofi_topo_data_t *)obj->userdata;
+		if (!numa_data || !numa_data->is_along_nic_or_gpu_path) {
+			continue;
+		}
+
+		int numa_id = (int)obj->os_index;
+		hwloc_obj_t parent = obj->parent;
+
+		/* Traverse up to find the first PACKAGE */
+		while (parent) {
+			if (parent->type == HWLOC_OBJ_PACKAGE) {
+				nccl_ofi_topo_data_t *pkg_data = (nccl_ofi_topo_data_t *)parent->userdata;
+				if (pkg_data && pkg_data->is_along_nic_or_gpu_path) {
+					pkg_data->relevant_numa_id = numa_id;
+				}
+				break;
+			}
+			parent = parent->parent;
+		}
+	}
+
+	/* Second pass: For each PACKAGE, if relevant_numa_id not set, traverse up to find NUMANODE */
+	obj = NULL;
+	while ((obj = hwloc_get_next_obj_by_type(topo, HWLOC_OBJ_PACKAGE, obj))) {
+		nccl_ofi_topo_data_t *pkg_data = (nccl_ofi_topo_data_t *)obj->userdata;
+		if (!pkg_data || !pkg_data->is_along_nic_or_gpu_path) {
+			continue;
+		}
+
+		/* If already set from NUMANODE pass, skip */
+		if (pkg_data->relevant_numa_id >= 0) {
+			continue;
+		}
+
+		hwloc_obj_t parent = obj->parent;
+
+		/* Traverse up to find the first NUMANODE */
+		while (parent) {
+			if (parent->type == HWLOC_OBJ_NUMANODE) {
+				pkg_data->relevant_numa_id = (int)parent->os_index;
+				break;
+			}
+			parent = parent->parent;
+		}
+	}
+#endif
 }
 
 /*
@@ -613,6 +721,9 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 		}
 
 	}
+
+	/* Set relevant_numa_id for PACKAGE and NUMA nodes based on HWLOC version */
+	set_relevant_numa_ids(ofi_topo->topo);
 
 	return 0;
 }
@@ -1598,10 +1709,10 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 	hwloc_obj_t child = NULL;
 	nccl_ofi_topo_data_t *topo_data = (nccl_ofi_topo_data_t *)node->userdata;
 
-	/* Only nodes with NICs or Nvidia GPUs in its subtree store
-	 * store userdata. Use this information to avoid printing
-	 * parts of the topology without NICs and Nvidia GPUs. */
-	if (!topo_data) return ret;
+	/* Only nodes along the NIC or GPU path should be processed.
+	 * Check is_along_nic_or_gpu_path to be precise, as userdata being
+	 * set may not necessarily mean it's part of GPU or NIC path. */
+	if (!topo_data || !topo_data->is_along_nic_or_gpu_path) return ret;
 
 	if (node->type == HWLOC_OBJ_BRIDGE) {
 		if (!node->attr) {
@@ -1630,14 +1741,44 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 				return ret;
 			}
 			indent += indent_offset;
-	} else if (node->type == HWLOC_OBJ_NUMANODE) {
-		/* Before HWLOC 2.0, NUMA topology nodes are stored in
-		 * the normal topology tree */
-		if ((ret = write_cpu_opening_tag(node, file, indent))) {
-			return ret;
+#if (HWLOC_API_VERSION >= 0x00020000)
+	/* HWLOC 2.x: For PACKAGE nodes, only call cpu_opening_tag if relevant_numa_id is set */
+	} else if (node->type == HWLOC_OBJ_PACKAGE) {
+		if (topo_data->relevant_numa_id >= 0) {
+			/* Find the NUMA node in memory children to get the os_index for the tag */
+			hwloc_obj_t numa_node = NULL;
+			if (node->memory_arity > 0) {
+				hwloc_obj_t mem_child = node->memory_first_child;
+				while (mem_child != NULL) {
+					if (mem_child->type == HWLOC_OBJ_NUMANODE &&
+					    (int)mem_child->os_index == topo_data->relevant_numa_id) {
+						numa_node = mem_child;
+						break;
+					}
+					mem_child = mem_child->next_sibling;
+				}
+			}
+			if (numa_node) {
+				if ((ret = write_cpu_opening_tag(numa_node, file, indent))) {
+					return ret;
+				}
+				close_numanode = true;
+				indent += indent_offset;
+			}
 		}
-		close_numanode = true;
-		indent += indent_offset;
+#else
+	/* HWLOC 1.x: For NUMANODE nodes, only call cpu_opening_tag if relevant_numa_id is set */
+	} else if (node->type == HWLOC_OBJ_NUMANODE) {
+		if (topo_data->relevant_numa_id >= 0) {
+			/* Before HWLOC 2.0, NUMA topology nodes are stored in
+			 * the normal topology tree */
+			if ((ret = write_cpu_opening_tag(node, file, indent))) {
+				return ret;
+			}
+			close_numanode = true;
+			indent += indent_offset;
+		}
+#endif
 	} else if ((numa_mem_child = get_numa_mem_child(node))) {
 		/* HWLOC 2.0 moved NUMA nodes from the normal topology
 		 * tree to list of memory children. The consequence is
@@ -1646,10 +1787,12 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 		 * root to a PCI device that needs to be
 		 * written. Collect those NUMA nodes and write
 		 * them. However, in case a NUMA node is found in the memory
-		 * children list and the NUMA node stores user data,
-		 * the NUMA node is on the path to a PCI device and
-		 * will be printed in the next recursion. */
-		if (!numa_mem_child->userdata) {
+		 * children list and the NUMA node stores user data
+		 * with is_along_nic_or_gpu_path set, the NUMA node is
+		 * on the path to a PCI device and will be printed
+		 * in the next recursion. */
+		nccl_ofi_topo_data_t *mem_child_data = (nccl_ofi_topo_data_t *)numa_mem_child->userdata;
+		if (!mem_child_data || !mem_child_data->is_along_nic_or_gpu_path) {
 			if ((ret = write_cpu_opening_tag(numa_mem_child, file, indent))) {
 				return ret;
 			}

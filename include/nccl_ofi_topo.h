@@ -53,6 +53,17 @@ typedef struct nccl_ofi_topo_data {
 
 	/* Backward pointer to corresponding topology node */
 	hwloc_obj_t node;
+
+	/* Indicates whether this node is along the path from a NIC
+	 * or GPU to the root. This flag is set by set_userdata_to_root(). */
+	bool is_along_nic_or_gpu_path;
+
+	/* Stores the relevant NUMA node ID for HWLOC version-specific
+	 * handling. For HWLOC 1.x, PACKAGE nodes store the NUMA ID of
+	 * the first NUMANODE found when traversing up. For HWLOC 2.x,
+	 * NUMANODE nodes store the NUMA ID from the first PACKAGE found
+	 * when traversing up. Value of -1 indicates not set. */
+	int relevant_numa_id;
 } nccl_ofi_topo_data_t;
 
 /*
