@@ -76,11 +76,11 @@ AC_DEFUN([AX_CHECK_ENABLE_DEBUG],[
     AS_CASE([$enable_debug],
       [yes],[
         AC_MSG_RESULT(yes)
-        CFLAGS="${CFLAGS} -gdwarf -Og -fno-omit-frame-pointer"
-        CXXFLAGS="${CXXFLAGS} -gdwarf -Og -fno-omit-frame-pointer"
-        FFLAGS="${FFLAGS} -gdwarf -Og -fno-omit-frame-pointer"
-        FCFLAGS="${FCFLAGS} -gdwarf -Og -fno-omit-frame-pointer"
-        OBJCFLAGS="${OBJCFLAGS} -gdwarf -Og -fno-omit-frame-pointer"
+        CFLAGS="${CFLAGS} -gdwarf -O0 -fno-omit-frame-pointer"
+        CXXFLAGS="${CXXFLAGS} -gdwarf -O0 -fno-omit-frame-pointer"
+        FFLAGS="${FFLAGS} -gdwarf -O0 -fno-omit-frame-pointer"
+        FCFLAGS="${FCFLAGS} -gdwarf -O0 -fno-omit-frame-pointer"
+        OBJCFLAGS="${OBJCFLAGS} -gdwarf -O0 -fno-omit-frame-pointer"
       ],
       [info],[
         AC_MSG_RESULT(info)
