@@ -7129,12 +7129,10 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 	nccl_ofi_topo_data_iterator_t data_iter;
 	int ret;
 
-	if (this->topo->max_group_size > 1) {
-		ret = write_topo_file(this->topo);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to write NCCL topology file");
-			return ret;
-		}
+	ret = write_topo_file(this->topo);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to write NCCL topology file");
+		return ret;
 	}
 
 	/* Initialize user data iterator */

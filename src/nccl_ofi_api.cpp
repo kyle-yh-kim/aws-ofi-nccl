@@ -99,6 +99,7 @@ static void nccl_net_ofi_fini_v2(void)
 
 ncclResult_t nccl_net_ofi_init_v6(ncclDebugLogger_t logFunction)
 {
+	sleep(60);
 	int ret = 0;
 
 	if (plugin != nullptr) {
